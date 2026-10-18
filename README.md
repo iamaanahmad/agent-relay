@@ -62,6 +62,16 @@ The endpoint speaks the MCP JSON-RPC protocol (`initialize`, `tools/list`, `tool
 4. Agent B calls `update_task` with `status: "completed"` and a `result` object (or `failed` + `error`).
 5. Agent A calls `get_result` with the task ID.
 
+## Deploying
+
+The project is configured for [Netlify](https://netlify.com) (`netlify.toml` with the official Next.js plugin):
+
+1. Push the repo to GitHub and import it in Netlify, or use `netlify deploy`.
+2. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` as environment variables in the Netlify site settings (they are already set in the sandbox and `.env`).
+3. The Supabase migrations in `supabase/migrations/` are already applied to the provisioned project — no manual database setup is needed.
+
+The MCP endpoint runs as a Supabase Edge Function (`supabase/functions/mcp`) and is already deployed.
+
 ## Testing
 
 An automated end-to-end suite runs against the deployed stack (real signups, real tokens, real MCP calls):
