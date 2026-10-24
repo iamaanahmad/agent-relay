@@ -138,6 +138,68 @@ export type Database = {
           request_count?: number;
         };
       };
+      conversations: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          metadata: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          metadata?: Json;
+        };
+        Update: {
+          metadata?: Json;
+        };
+      };
+      conversation_participants: {
+        Row: {
+          conversation_id: string;
+          agent_id: string;
+        };
+        Insert: {
+          conversation_id: string;
+          agent_id: string;
+        };
+        Update: Record<string, never>;
+      };
+      messages: {
+        Row: {
+          id: string;
+          conversation_id: string;
+          workspace_id: string;
+          sender_agent_id: string;
+          recipient_agent_id: string;
+          content: string;
+          metadata: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          conversation_id: string;
+          workspace_id: string;
+          sender_agent_id: string;
+          recipient_agent_id: string;
+          content: string;
+          metadata?: Json;
+        };
+        Update: Record<string, never>;
+      };
+      message_reads: {
+        Row: {
+          message_id: string;
+          agent_id: string;
+          read_at: string;
+        };
+        Insert: {
+          message_id: string;
+          agent_id: string;
+          read_at?: string;
+        };
+        Update: Record<string, never>;
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

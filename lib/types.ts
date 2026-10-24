@@ -62,3 +62,28 @@ export type TaskEvent = {
   detail: Record<string, unknown>;
   created_at: string;
 };
+
+export type Conversation = {
+  id: string;
+  workspace_id: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type Message = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string;
+  sender_agent_id: string;
+  recipient_agent_id: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  read_at?: string | null;
+};
+
+export type MessageRead = {
+  message_id: string;
+  agent_id: string;
+  read_at: string;
+};

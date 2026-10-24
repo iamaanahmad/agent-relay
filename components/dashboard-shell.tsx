@@ -33,7 +33,7 @@ const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/agents', label: 'Agents', icon: Plug },
   { href: '/send', label: 'Send task', icon: Send },
-  { href: '/agent-talk', label: 'Agent Talk', icon: MessageSquareText },
+  { href: '/agent-talk', label: 'Messaging', icon: MessageSquareText },
   { href: '/skills', label: 'Agent Skills', icon: BookOpen },
   { href: '/inbox', label: 'Inbox', icon: Inbox },
   { href: '/approvals', label: 'Approvals', icon: ShieldCheck },

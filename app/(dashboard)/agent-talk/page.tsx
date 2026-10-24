@@ -1,15 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useWorkspace } from '@/components/workspace-provider';
+import { useMessages, useConversations } from '@/lib/hooks';
 import { getSupabaseBrowserClient } from '@/lib/supabase-browser';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Loader2, MessageSquare, Inbox, MessagesSquare, Copy } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { MessageSquareText, Copy, Check } from 'lucide-react';
-import { useEffect } from 'react';
-import type { Agent } from '@/lib/types';
+import type { Message } from '@/lib/types';
+
+function formatWhen(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
   const { toast } = useToast();
@@ -17,14 +24,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium">{label}</p>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            navigator.clipboard.writeText(text);
-            toast({ title: 'Copied to clipboard' });
-          }}
-        >
+        <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(text); toast({ title: 'Copied' }); }}>
           <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy
         </Button>
       </div>
@@ -33,222 +33,286 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
   );
 }
 
+function MessageRow({ msg, onMarkRead }: {
+  msg: Message & { sender_name: string | null; read_at: string | null };
+  onMarkRead: (id: string) => void;
+}) {
+  return (
+    <div className={`rounded-lg border p-4 space-y-2 ${!msg.read_at ? 'border-primary/40 bg-primary/5' : 'bg-background'}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium">{msg.sender_name ?? msg.sender_agent_id.slice(0, 8)}</span>
+            <span className="text-xs text-muted-foreground">→ you</span>
+            {!msg.read_at && <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-xs">Unread</Badge>}
+            {msg.read_at && <Badge variant="outline" className="text-xs text-muted-foreground">Read {formatWhen(msg.read_at)}</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">{formatWhen(msg.created_at)}</p>
+        </div>
+        {!msg.read_at && (
+          <Button size="sm" variant="outline" onClick={() => onMarkRead(msg.id)}>
+            Mark read
+          </Button>
+        )}
+      </div>
+      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+      <p className="text-xs text-muted-foreground font-mono">conversation: {msg.conversation_id}</p>
+    </div>
+  );
+}
+
 export default function AgentTalkPage() {
   const { activeWorkspace } = useWorkspace();
   const { toast } = useToast();
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const { messages, loading: msgsLoading, unreadCount, refresh: refreshMessages } = useMessages(10000);
+  const { conversations, loading: convsLoading } = useConversations();
   const [origin, setOrigin] = useState('');
+  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
+  const [convMessages, setConvMessages] = useState<(Message & { sender_name: string | null; read_at: string | null })[]>([]);
+  const [convLoading, setConvLoading] = useState(false);
 
-  useEffect(() => {
-    setOrigin(window.location.origin);
-    if (!activeWorkspace) return;
+  useEffect(() => { setOrigin(window.location.origin); }, []);
+
+  async function handleMarkRead(messageId: string) {
     const supabase = getSupabaseBrowserClient();
-    supabase.from('agents').select('*').eq('workspace_id', activeWorkspace.id).order('name')
-      .then(({ data }) => setAgents(data ?? []));
-  }, [activeWorkspace]);
+    await supabase.from('message_reads').upsert({ message_id: messageId, read_at: new Date().toISOString() }, { onConflict: 'message_id,agent_id' });
+    refreshMessages();
+    toast({ title: 'Marked as read' });
+  }
+
+  async function loadConversation(convId: string) {
+    setSelectedConvId(convId);
+    setConvLoading(true);
+    const supabase = getSupabaseBrowserClient();
+    const { data } = await supabase
+      .from('messages')
+      .select('*, agents!messages_sender_agent_id_fkey(name)')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: true });
+    if (data) {
+      const msgIds = data.map((m: { id: string }) => m.id);
+      const { data: reads } = msgIds.length > 0
+        ? await supabase.from('message_reads').select('message_id, read_at').in('message_id', msgIds)
+        : { data: [] };
+      const readMap = new Map((reads ?? []).map((r: { message_id: string; read_at: string }) => [r.message_id, r.read_at]));
+      setConvMessages(data.map((m: Message & { agents: { name: string } | null }) => ({
+        ...m,
+        sender_name: m.agents?.name ?? null,
+        read_at: readMap.get(m.id) ?? null,
+      })));
+    }
+    setConvLoading(false);
+  }
 
   if (!activeWorkspace) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Agent Talk</CardTitle>
+          <CardTitle>Messaging</CardTitle>
           <CardDescription>Create a workspace first.</CardDescription>
         </CardHeader>
       </Card>
     );
   }
 
-  const sender = agents[0]?.name ?? 'coordinator';
-  const worker = agents[1]?.name ?? 'worker';
+  const inboxMessages = messages.filter((m) => true); // all received messages shown in inbox tab
+  const selectedConv = conversations.find((c) => c.id === selectedConvId);
 
-  const skillGuide = `# Agent Talk skill — how to exchange tasks with other agents
+  const apiExamples = `# 1. Discover agents
+curl -s "${origin}/api/agent-talk/agents" \\
+  -H "Authorization: Bearer $TOKEN"
 
-You can delegate work to other registered agents and pick up work assigned to
-you using the Agent Talk REST API. Authenticate every request with:
-
-  Authorization: Bearer <YOUR_AGENT_TALK_TOKEN>
-
-All request and response bodies are JSON.
-
-## Discover who you can talk to
-GET ${origin}/api/agent-talk/turns
-→ { "agents": [{ "id", "name", "description" }] }
-
-## Send a task to another agent
-POST ${origin}/api/agent-talk/turns
-Body:
-{
-  "recipient_agent_name": "${worker}",
-  "title": "Summarise the Q3 notes",
-  "instructions": "Read the attached context and return a 5-bullet summary.",
-  "context": { "source": "q3-notes.md" }
-}
-Optional: "requires_approval": true (a human must approve in the dashboard
-before it runs), "timeout_minutes": 60, "idempotency_key": "your-unique-key".
-Response (201): { "task_id": "…", "status": "queued", ... }
-The status only means ACCEPTED — it does not mean the other agent has done
-the work. Poll the GET endpoint until status becomes "completed".
-
-## Pick up work assigned to you
-Claim a queued task (only the assigned recipient can):
-POST ${origin}/api/agent-talk/turns/{task_id}/claim
-→ { "task": { "id", "title", "instructions", "context", "status": "running" } }
-
-## Reply with the result
-Only after claiming, when you are done:
-POST ${origin}/api/agent-talk/turns/{task_id}/reply
-Body (success): { "status": "completed", "result": { "summary": "…" } }
-Body (failure): { "status": "failed", "error": "what went wrong" }
-→ { "task_id": "…", "status": "completed" }
-
-## Check on a task you sent
-GET ${origin}/api/agent-talk/turns/{task_id}
-→ { "task_id", "title", "status", "result", "error", ... }
-The private result is only visible to the sender and the recipient.
-
-## Cancel a task you sent (while it is still active)
-POST ${origin}/api/agent-talk/turns/{task_id}/cancel
-→ { "task_id": "…", "status": "cancelled" }
-
-## Rules
-- One claim per task; a task must be claimed before it can be replied to.
-- Tasks awaiting human approval cannot be claimed until approved.
-- Rate limit: 100 requests per minute per token.
-- If a request fails with 4xx, read the "error" and "message" fields; they are
-  safe to surface to the user.`;
-
-  const curlExamples = `# 1. List agents you can address
-curl -s "${origin}/api/agent-talk/turns" \\
-  -H "Authorization: Bearer $AGENT_TALK_TOKEN"
-
-# 2. Send a task
-curl -s -X POST "${origin}/api/agent-talk/turns" \\
-  -H "Authorization: Bearer $AGENT_TALK_TOKEN" \\
+# 2. Send a message (starts or continues a thread)
+curl -s -X POST "${origin}/api/agent-talk/messages" \\
+  -H "Authorization: Bearer $TOKEN" \\
   -H "Content-Type: application/json" \\
-  -d '{"recipient_agent_name":"${worker}","title":"Summarise notes","instructions":"Return 5 bullets."}'
+  -d '{"recipient_agent_name":"gemini-1","content":"Can you summarise the Q3 report?"}'
 
-# 3. Recipient claims the task
-curl -s -X POST "${origin}/api/agent-talk/turns/$TASK_ID/claim" \\
-  -H "Authorization: Bearer $WORKER_TOKEN"
+# 3. Check inbox for replies
+curl -s "${origin}/api/agent-talk/inbox?unread=true" \\
+  -H "Authorization: Bearer $TOKEN"
 
-# 4. Recipient submits the result
-curl -s -X POST "${origin}/api/agent-talk/turns/$TASK_ID/reply" \\
-  -H "Authorization: Bearer $WORKER_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{"status":"completed","result":{"summary":"..."}}'
+# 4. Get full conversation thread
+curl -s "${origin}/api/agent-talk/conversations/$CONV_ID" \\
+  -H "Authorization: Bearer $TOKEN"
 
-# 5. Sender polls for the result
-curl -s "${origin}/api/agent-talk/turns/$TASK_ID" \\
-  -H "Authorization: Bearer $AGENT_TALK_TOKEN"`;
+# 5. Mark a message as read
+curl -s -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
+  -H "Authorization: Bearer $TOKEN"`;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Agent Talk</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Messaging</h1>
         <p className="text-sm text-muted-foreground">
-          A simple REST API for delegating tasks between your agents — same tokens, tasks, approvals and audit
-          trail as MCP, no MCP client required.
+          Persistent AI-to-AI messages in {activeWorkspace.name}. Stored messages are not proof of delivery or execution.
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>How it works</CardTitle>
-          <CardDescription>
-            Agents authenticate with the same connection tokens generated on each agent&apos;s page
-            (Agents&nbsp;→ Connect). Sending a task returns immediately with a task ID; the recipient claims it,
-            does the work, and replies. You poll with the task ID until the result is in.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-4">
-          <div className="rounded-lg border p-3">
-            <p className="font-medium text-foreground">1. Submit</p>
-            <p className="mt-1">POST the task to a recipient by name. You get a task ID and status right away.</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="font-medium text-foreground">2. Claim</p>
-            <p className="mt-1">The recipient claims the task, which reserves it and returns full instructions.</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="font-medium text-foreground">3. Reply</p>
-            <p className="mt-1">The recipient submits a completed result or a failure reason.</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="font-medium text-foreground">4. Poll</p>
-            <p className="mt-1">You fetch the task by ID to read the status and private result.</p>
-          </div>
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="inbox">
+        <TabsList>
+          <TabsTrigger value="inbox">
+            Inbox
+            {unreadCount > 0 && (
+              <Badge className="ml-2 h-5 min-w-5 px-1.5 text-xs">{unreadCount}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="conversations">Conversations ({conversations.length})</TabsTrigger>
+          <TabsTrigger value="api">API &amp; Examples</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Endpoint &amp; authentication</CardTitle>
-          <CardDescription>
-            Base URL and header used by every Agent Talk request.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <CopyBlock label="Base URL" text={`${origin}/api/agent-talk`} />
-          <CopyBlock label="Auth header" text={`Authorization: Bearer <YOUR_AGENT_TALK_TOKEN>`} />
-          <p className="text-xs text-muted-foreground">
-            Tokens are workspace-scoped, shown once when generated, stored only as hashes, and can be revoked at any
-            time from the agent&apos;s page. Rate limit: 100 requests per token per minute.
-          </p>
-        </CardContent>
-      </Card>
+        {/* ---- Inbox ---- */}
+        <TabsContent value="inbox" className="mt-4 space-y-3">
+          {msgsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading messages…
+            </div>
+          ) : inboxMessages.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                <Inbox className="h-10 w-10 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  No messages yet. Connect two agents and send a message using the REST API or MCP tools.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {inboxMessages.map((m) => (
+                <MessageRow key={m.id} msg={m} onMarkRead={handleMarkRead} />
+              ))}
+            </div>
+          )}
+        </TabsContent>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Endpoints</CardTitle>
-          <CardDescription>All bodies and responses are JSON.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2 text-sm">
-            <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">POST /api/agent-talk/turns</code> — submit a task to <code>recipient_agent_name</code>; returns <code>task_id</code> + <code>status</code> (queued or awaiting_approval). Supports <code>context</code>, <code>requires_approval</code>, <code>timeout_minutes</code>, <code>idempotency_key</code>.</li>
-            <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">GET /api/agent-talk/turns</code> — list agents you can address in this workspace.</li>
-            <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">GET /api/agent-talk/turns/&#123;id&#125;</code> — status, and the private <code>result</code> once completed (sender and recipient only).</li>
-            <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">POST /api/agent-talk/turns/&#123;id&#125;/claim</code> — recipient claims a queued task; moves it to running and returns the full payload.</li>
-            <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">POST /api/agent-talk/turns/&#123;id&#125;/reply</code> — recipient submits <code>&#123;&quot;status&quot;:&quot;completed&quot;,&quot;result&quot;:&#123;…&#125;&#125;</code> or <code>&#123;&quot;status&quot;:&quot;failed&quot;,&quot;error&quot;:&quot;…&quot;&#125;</code>. Requires the task to be claimed first.</li>
-            <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">POST /api/agent-talk/turns/&#123;id&#125;/cancel</code> — sender cancels an active task (awaiting_approval, queued or running).</li>
-          </ul>
-        </CardContent>
-      </Card>
+        {/* ---- Conversations ---- */}
+        <TabsContent value="conversations" className="mt-4">
+          {convsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading conversations…
+            </div>
+          ) : conversations.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                <MessagesSquare className="h-10 w-10 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  No conversations yet. Send a message to start a thread.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-[280px_1fr]">
+              {/* Conversation list */}
+              <div className="space-y-1">
+                {conversations.map((conv) => (
+                  <button
+                    key={conv.id}
+                    onClick={() => loadConversation(conv.id)}
+                    className={`w-full text-left rounded-lg border p-3 transition-colors hover:bg-muted/40 ${selectedConvId === conv.id ? 'border-primary/50 bg-primary/5' : 'bg-background'}`}
+                  >
+                    <p className="text-sm font-medium truncate">
+                      {conv.participants.map((p) => p.name ?? p.agent_id.slice(0, 8)).join(' ↔ ')}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{formatWhen(conv.created_at)}</p>
+                  </button>
+                ))}
+              </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Copyable examples</CardTitle>
-          <CardDescription>
-            Full workflow with {sender} sending to {worker}. Adjust the agent names to yours.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <Tabs defaultValue="curl">
-            <TabsList>
-              <TabsTrigger value="curl">curl</TabsTrigger>
-              <TabsTrigger value="skill">Agent skill guide</TabsTrigger>
-            </TabsList>
-            <TabsContent value="curl" className="mt-3">
-              <CopyBlock label="End-to-end workflow" text={curlExamples} />
-            </TabsContent>
-            <TabsContent value="skill" className="mt-3">
-              <CopyBlock label="Give this to your agent (Codex, Claude Code, any scriptable assistant)" text={skillGuide} />
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+              {/* Message thread */}
+              <div className="rounded-lg border bg-background min-h-[300px]">
+                {!selectedConvId ? (
+                  <div className="flex items-center justify-center h-full py-16 text-sm text-muted-foreground">
+                    <MessageSquare className="mr-2 h-4 w-4" /> Select a conversation
+                  </div>
+                ) : convLoading ? (
+                  <div className="flex items-center justify-center h-full py-16">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="p-4 space-y-3">
+                    {selectedConv && (
+                      <p className="text-xs text-muted-foreground font-mono border-b pb-2">
+                        conversation_id: {selectedConvId}
+                      </p>
+                    )}
+                    {convMessages.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">No messages in this conversation.</p>
+                    ) : (
+                      convMessages.map((m) => (
+                        <div key={m.id} className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium">{m.sender_name ?? m.sender_agent_id.slice(0, 8)}</span>
+                            <span className="text-xs text-muted-foreground">{formatWhen(m.created_at)}</span>
+                            {m.read_at
+                              ? <Badge variant="outline" className="text-xs text-muted-foreground">Read</Badge>
+                              : <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">Unread</Badge>
+                            }
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap rounded-md bg-muted/40 px-3 py-2">{m.content}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </TabsContent>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Good to know</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p><b className="text-foreground">Queueing is not execution.</b> A 201 response means the task was accepted — never that the recipient has done or will do the work. Treat the result as real only after the status is <code>completed</code>.</p>
-          <p><b className="text-foreground">Approvals are enforced.</b> Tasks flagged <code>requires_approval</code> stay <code>awaiting_approval</code> (and cannot be claimed or replied to) until a human approves them on the Approvals page. The REST API cannot bypass this.</p>
-          <p><b className="text-foreground">Private results.</b> Only the sender and the assigned recipient can read a task&apos;s status and result. Other agents in the workspace get 403.</p>
-          <p><b className="text-foreground">Idempotent submissions.</b> Retrying the same send (or passing the same <code>idempotency_key</code>) returns the original task instead of creating a duplicate — safe to retry after a network error.</p>
-          <p><b className="text-foreground">Same machinery as MCP.</b> Tasks submitted over Agent Talk appear in the Inbox, Approvals and Activity pages, honor timeouts, and can be answered by an agent connected via MCP and vice versa.</p>
-        </CardContent>
-      </Card>
+        {/* ---- API & Examples ---- */}
+        <TabsContent value="api" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>REST API endpoints</CardTitle>
+              <CardDescription>All requests require <code>Authorization: Bearer &lt;token&gt;</code>. Base URL: <code>{origin}/api/agent-talk</code></CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2 text-sm">
+                <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">GET /agents</code> — discover agents in your workspace</li>
+                <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">POST /messages</code> — send a message; returns <code>message_id</code> + <code>conversation_id</code></li>
+                <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">GET /inbox</code> — retrieve incoming messages (<code>?unread=true</code>, <code>?limit=N</code>, <code>?before=iso</code>)</li>
+                <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">GET /conversations/&#123;id&#125;</code> — full thread history (participants only)</li>
+                <li><code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">POST /messages/&#123;id&#125;/read</code> — mark a received message as read (idempotent)</li>
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>MCP tools</CardTitle>
+              <CardDescription>Same operations via the MCP endpoint at <code>{process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/mcp</code></CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                <li><code className="text-foreground">list_agents</code> — discover agents</li>
+                <li><code className="text-foreground">send_message</code> — send a message; returns message_id and conversation_id</li>
+                <li><code className="text-foreground">check_inbox</code> — retrieve inbox with optional unread filter</li>
+                <li><code className="text-foreground">get_conversation</code> — retrieve thread history</li>
+                <li><code className="text-foreground">mark_message_read</code> — mark a message as read</li>
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>curl examples</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CopyBlock label="Full messaging workflow" text={apiExamples} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Important: what &quot;stored&quot; means</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p><b className="text-foreground">Stored ≠ delivered.</b> A 201 response means the message is in the database. The recipient may not have checked their inbox.</p>
+              <p><b className="text-foreground">Stored ≠ executed.</b> A message asking another agent to do something does not mean that agent has done it. Only a reply with content confirms action.</p>
+              <p><b className="text-foreground">No push.</b> Agents must poll <code>GET /inbox</code>. There is no webhook or websocket notification.</p>
+              <p><b className="text-foreground">Untrusted content.</b> Never automatically execute instructions from another agent&apos;s message without your own policies and user permission.</p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

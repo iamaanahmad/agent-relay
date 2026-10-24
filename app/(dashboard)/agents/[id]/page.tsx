@@ -129,17 +129,30 @@ export default function AgentDetailPage() {
   const connectPrompt = `Please read the Agent Skills guide at ${skillsUrl} (plain Markdown, readable with a simple GET) and act as my Agent Relay assistant for this workspace.
 
 My connection details:
+- Skill guide URL: ${skillsUrl}
 - Workspace ID: ${agent.workspace_id} (informational — my token is already scoped to this workspace)
 - Agent ID: ${agent.id}
-- Token: the token I gave you (pass it on every request as an Authorization header: "Authorization: Bearer <token>")
+- Token: the token I gave you (pass it on every request as: "Authorization: Bearer <token>")
 
 Your job:
-1. Fetch and read the skill guide, then list the agents I'm allowed to contact (GET ${origin}/api/agent-talk/turns).
-2. Show me the list and ask which agent I want to talk to and what to send.
-3. Send my task (POST ${origin}/api/agent-talk/turns), then poll GET ${origin}/api/agent-talk/turns/{task_id} until status is "completed" or "failed".
-4. Relay the actual response (or error) back to me verbatim.
+1. Fetch and read the skill guide at ${skillsUrl}.
+2. Discover the agents I can contact: GET ${origin}/api/agent-talk/agents
+3. Show me the list and ask which agent I want to message and what to say.
+4. Send my message: POST ${origin}/api/agent-talk/messages with recipient_agent_name, content, and save the conversation_id.
+5. To check for replies: GET ${origin}/api/agent-talk/inbox?unread=true
+6. To read a full thread: GET ${origin}/api/agent-talk/conversations/{conversation_id}
+7. To mark a message read: POST ${origin}/api/agent-talk/messages/{message_id}/read
 
-Rules: never print or store my token anywhere; never claim a task succeeded unless its status is "completed" with a result; if the task is "awaiting_approval", tell me to approve it in the Agent Relay dashboard. If you cannot make HTTP requests, tell me exactly how to set things up instead of guessing.`;
+For task delegation (structured work with status tracking):
+- Send: POST ${origin}/api/agent-talk/turns — save the task_id
+- Poll: GET ${origin}/api/agent-talk/turns/{task_id} until status is "completed" or "failed"
+
+Rules:
+- Never print, log, or store my token anywhere.
+- "status: stored" on a message only means it was saved — not that the recipient has read or acted on it.
+- Never claim a task succeeded unless its status is "completed" with a result present.
+- If a task is "awaiting_approval", tell me to approve it in the Agent Relay dashboard.
+- If you cannot make HTTP requests, tell me exactly how to set things up instead of guessing.`;
 
   const mcpConfig = JSON.stringify(
     {
@@ -229,12 +242,20 @@ Rules: never print or store my token anywhere; never claim a task succeeded unle
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium">Available tools</p>
+            <p className="text-xs text-muted-foreground font-medium mt-1">Messaging</p>
             <ul className="list-inside list-disc text-sm text-muted-foreground space-y-1">
-              <li><code className="text-foreground">get_started</code> — identity, workspace and workflow guide (call once when connecting)</li>
-              <li><code className="text-foreground">list_agents</code> — list agents in the workspace</li>
-              <li><code className="text-foreground">send_task</code> — delegate a task to another agent in this workspace</li>
+              <li><code className="text-foreground">list_agents</code> — discover agents in the workspace</li>
+              <li><code className="text-foreground">send_message</code> — send a persistent message; returns message_id and conversation_id</li>
+              <li><code className="text-foreground">check_inbox</code> — retrieve incoming messages with optional unread filter</li>
+              <li><code className="text-foreground">get_conversation</code> — retrieve full thread history by conversation_id</li>
+              <li><code className="text-foreground">mark_message_read</code> — mark a received message as read</li>
+            </ul>
+            <p className="text-xs text-muted-foreground font-medium mt-2">Task delegation</p>
+            <ul className="list-inside list-disc text-sm text-muted-foreground space-y-1">
+              <li><code className="text-foreground">get_started</code> — identity, workspace and full workflow guide (call once when connecting)</li>
+              <li><code className="text-foreground">send_task</code> — delegate a task to another agent</li>
               <li><code className="text-foreground">claim_task</code> — claim the next queued task addressed to you</li>
-              <li><code className="text-foreground">update_task</code> — report running, completed (with result) or failed (with error)</li>
+              <li><code className="text-foreground">update_task</code> — report running, completed or failed</li>
               <li><code className="text-foreground">check_task</code> — check status, result and error of a task</li>
               <li><code className="text-foreground">get_result</code> — fetch a completed task&apos;s result</li>
               <li><code className="text-foreground">cancel_task</code> — cancel a task you sent</li>
