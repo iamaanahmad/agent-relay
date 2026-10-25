@@ -15,10 +15,14 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+
+const envPath = existsSync(new URL('../.env.local', import.meta.url))
+  ? new URL('../.env.local', import.meta.url)
+  : new URL('../.env', import.meta.url);
 
 const env = Object.fromEntries(
-  readFileSync(new URL('../.env', import.meta.url), 'utf8')
+  readFileSync(envPath, 'utf8')
     .split('\n')
     .filter((l) => l.includes('=') && !l.startsWith('#'))
     .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
@@ -106,8 +110,8 @@ async function issueToken(userClient, agentId) {
 // ---- Setup ------------------------------------------------------------------
 console.log('\n== Setup ==\n');
 
-const aliceJwt = await signupUser(`msg-alice-${stamp}@example.com`, `Tq9!vXz#${stamp}aA`);
-const bobJwt = await signupUser(`msg-bob-${stamp}@example.com`, `Tq9!vXz#${stamp}bB`);
+const aliceJwt = await signupUser(`msg.alice.${stamp}@gmail.com`, `Tq9!vXz#${stamp}aA`);
+const bobJwt = await signupUser(`msg.bob.${stamp}@gmail.com`, `Tq9!vXz#${stamp}bB`);
 const alice = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { headers: { Authorization: `Bearer ${aliceJwt}` } } });
 const bob = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { headers: { Authorization: `Bearer ${bobJwt}` } } });
 
