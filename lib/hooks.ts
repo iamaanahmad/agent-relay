@@ -150,7 +150,7 @@ export function useMessages(pollMs?: number) {
   return { messages, loading, unreadCount, refresh };
 }
 
-export function useConversations() {
+export function useConversations(pollMs?: number) {
   const { activeWorkspace } = useWorkspace();
   const [conversations, setConversations] = useState<(Conversation & { participants: { agent_id: string; name: string | null }[] })[]
   >([]);
@@ -185,7 +185,10 @@ export function useConversations() {
   useEffect(() => {
     setLoading(true);
     refresh();
-  }, [refresh]);
+    if (!pollMs) return;
+    const interval = setInterval(refresh, pollMs);
+    return () => clearInterval(interval);
+  }, [refresh, pollMs]);
 
   return { conversations, loading, refresh };
 }

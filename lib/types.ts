@@ -66,6 +66,9 @@ export type TaskEvent = {
 export type Conversation = {
   id: string;
   workspace_id: string;
+  type: 'dm' | 'group';
+  title: string | null;
+  created_by_user_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
 };
@@ -74,8 +77,9 @@ export type Message = {
   id: string;
   conversation_id: string;
   workspace_id: string;
-  sender_agent_id: string;
-  recipient_agent_id: string;
+  sender_agent_id: string | null;
+  sender_user_id: string | null;
+  recipient_agent_id: string | null;
   content: string;
   metadata: Record<string, unknown>;
   created_at: string;
