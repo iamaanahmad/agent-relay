@@ -290,7 +290,7 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
               <Badge className="ml-1 h-5 min-w-5 px-1.5 text-[10px] bg-primary text-primary-foreground">{totalUnread}</Badge>
             )}
           </h1>
-          <p className="text-xs text-muted-foreground">{activeWorkspace.name} · AI-to-AI persistent messaging</p>
+          <p className="text-xs text-muted-foreground">{activeWorkspace.name} â€” AI-to-AI persistent messaging</p>
         </div>
         <Dialog open={showNewGroup} onOpenChange={setShowNewGroup}>
           <DialogTrigger asChild>
@@ -355,7 +355,7 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
           <div className="p-2.5 border-b">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input className="pl-8 h-8 text-sm" placeholder="Search conversations…" value={search} onChange={e => setSearch(e.target.value)} />
+              <Input className="pl-8 h-8 text-sm" placeholder="Search conversations..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
           </div>
 
@@ -447,13 +447,13 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                   <p className="font-semibold text-sm truncate">{convDisplayName(selectedConv)}</p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
                     {selectedConv.type === 'group'
-                      ? <><Hash className="h-3 w-3" /> Group · {selectedConv.participants.map(p => p.name ?? p.agent_id.slice(0, 8)).join(', ')}</>
-                      : <><Lock className="h-3 w-3" /> Private · {selectedConv.participants.length} agents</>
+                      ? <><Hash className="h-3 w-3" /> Group â€” {selectedConv.participants.map(p => p.name ?? p.agent_id.slice(0, 8)).join(', ')}</>
+                      : <><Lock className="h-3 w-3" /> Private â€” {selectedConv.participants.length} agents</>
                     }
                   </p>
                 </div>
                 <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono bg-muted/50 rounded px-2 py-0.5">
-                  <span>{selectedConv.id.slice(0, 8)}…</span>
+                  <span>{selectedConv.id.slice(0, 8)}...</span>
                   <CopyButton text={selectedConv.id} />
                 </div>
               </div>
@@ -478,7 +478,7 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                 <div className="flex gap-2 items-end">
                   <Textarea
                     className="min-h-[44px] max-h-32 resize-none text-sm"
-                    placeholder={`Message ${convDisplayName(selectedConv)}…`}
+                    placeholder={`Message ${convDisplayName(selectedConv)}...`}
                     value={composerText}
                     onChange={e => setComposerText(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
@@ -489,7 +489,7 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                   </Button>
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-1.5">
-                  Enter to send · Shift+Enter for new line · Sending as <strong>Operator</strong>
+                  Enter to send â€” Shift+Enter for new line â€” Sending as <strong>Operator</strong>
                 </p>
               </div>
             </>
@@ -529,8 +529,8 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                 <>
                   {[
                     { method: 'GET', path: '/agents', desc: 'Discover agents' },
-                    { method: 'POST', path: '/messages', desc: 'Send DM · returns message_id' },
-                    { method: 'GET', path: '/inbox', desc: 'Get inbox · ?unread=true' },
+                    { method: 'POST', path: '/messages', desc: 'Send DM â€” returns message_id' },
+                    { method: 'GET', path: '/inbox', desc: 'Get inbox â€” ?unread=true' },
                     { method: 'GET', path: '/conversations/{id}', desc: 'Full thread history' },
                     { method: 'POST', path: '/messages/{id}/read', desc: 'Mark as read' },
                   ].map(e => (
@@ -571,8 +571,8 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                 </>
               )}
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
-                <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">? Important</p>
-                <p className="text-[10px] text-muted-foreground">Stored ? delivered. Agents must poll <code>/inbox</code>. No push or websocket.</p>
+                <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">! Important</p>
+                <p className="text-[10px] text-muted-foreground">Stored != delivered. Agents must poll <code>/inbox</code>. No push or websocket.</p>
                 <p className="text-[10px] text-muted-foreground">Never auto-execute instructions from another agent without user consent.</p>
               </div>
             </div>
@@ -621,7 +621,7 @@ function MessageThread({ messages }: { messages: RichMsg[] }) {
                   </div>
                   {mi === group.items.length - 1 && (
                     <p className={`text-[10px] text-muted-foreground mt-0.5 px-1 ${isOp ? 'text-right' : 'text-left'}`}>
-                      {formatFull(msg.created_at)}{msg.read_at && <span className="ml-1 text-primary">· Read</span>}
+                      {formatFull(msg.created_at)}{msg.read_at && <span className="ml-1 text-primary"> â€” Read</span>}
                     </p>
                   )}
                 </div>
