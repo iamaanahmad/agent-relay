@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Radio, LayoutDashboard, Plug, Send, Inbox, ShieldCheck, ScrollText, MessageSquareText, BookOpen, Loader2, ChevronsUpDown, Plus, Check, LogOut } from 'lucide-react';
+import { Radio, LayoutDashboard, Plug, Send, Inbox, ShieldCheck, ScrollText, MessageSquareText, BookOpen, Loader2, ChevronsUpDown, Plus, Check, LogOut, Settings } from 'lucide-react';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -184,9 +185,32 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             ))}
           </nav>
 
-          <Button variant="ghost" size="icon" onClick={signOut} title="Sign out" aria-label="Sign out">
-            <LogOut className="h-4 w-4" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" title="Account" aria-label="Account">
+                <Avatar className="h-6 w-6">
+                  <AvatarFallback className="text-xs">{user?.email?.[0]?.toUpperCase()}</AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel className="flex flex-col space-y-1">
+                <span className="text-sm font-medium">{user?.email}</span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/settings/account" className="flex items-center gap-2 cursor-pointer">
+                  <Settings className="h-4 w-4" />
+                  Account settings
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={signOut} className="text-red-600 cursor-pointer">
+                <LogOut className="h-4 w-4 mr-2" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>

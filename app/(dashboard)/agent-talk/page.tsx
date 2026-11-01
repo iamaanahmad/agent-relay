@@ -5,6 +5,7 @@ import {
 } from 'react';
 import { useWorkspace } from '@/components/workspace-provider';
 import { useAgents, useConversations } from '@/lib/hooks';
+import { useAuth } from '@/components/auth-provider';
 import { getSupabaseBrowserClient } from '@/lib/supabase-browser';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -111,6 +112,7 @@ type FilterTab = 'all' | 'group' | 'dm' | 'unread';
 
 export default function MessagingPage() {
   const { activeWorkspace } = useWorkspace();
+  const { user } = useAuth();
   const { toast } = useToast();
   const { agents } = useAgents();
   const { conversations, loading: convsLoading, refresh: refreshConvs } = useConversations(8000);
@@ -130,7 +132,11 @@ export default function MessagingPage() {
   const [apiTab, setApiTab] = useState<'rest' | 'mcp'>('rest');
   const [apiCollapsed, setApiCollapsed] = useState(true);
   const [origin, setOrigin] = useState('');
+  const [mentions, setMentions] = useState<{ [key: string]: string }>({});
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState('');
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { setOrigin(window.location.origin); }, []);
@@ -158,6 +164,41 @@ export default function MessagingPage() {
 
   const selectedConv = richConvs.find(c => c.id === selectedConvId);
   const totalUnread = richConvs.reduce((s, c) => s + (c.unread ?? 0), 0);
+
+  // Handle @mentions
+  useEffect(() => {
+    const atIndex = composerText.lastIndexOf('@');
+    if (atIndex >= 0) {
+      const afterAt = composerText.substring(atIndex + 1);
+      const spaceIndex = afterAt.search(/[\s\n]/);
+      const mention = spaceIndex >= 0 ? afterAt.substring(0, spaceIndex) : afterAt;
+      
+      if (mention.length > 0) {
+        setMentionFilter(mention.toLowerCase());
+        setShowMentions(true);
+      } else {
+        setShowMentions(false);
+      }
+    } else {
+      setShowMentions(false);
+    }
+  }, [composerText]);
+
+  function insertMention(agentName: string, agentId: string) {
+    const atIndex = composerText.lastIndexOf('@');
+    const beforeAt = composerText.substring(0, atIndex);
+    const afterAt = composerText.substring(atIndex + 1);
+    const spaceIndex = afterAt.search(/[\s\n]/);
+    const after = spaceIndex >= 0 ? afterAt.substring(spaceIndex) : '';
+    
+    const newText = `${beforeAt}@${agentName} ${after}`;
+    setComposerText(newText);
+    setMentions({ ...mentions, [`@${agentName}`]: agentId });
+    setShowMentions(false);
+    
+    // Focus back to textarea
+    setTimeout(() => composerRef.current?.focus(), 0);
+  }
 
   const fetchMessages = useCallback(async (convId: string) => {
     const supabase = getSupabaseBrowserClient();
@@ -201,13 +242,19 @@ export default function MessagingPage() {
       const res = await fetch('/api/dashboard/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation_id: selectedConvId, content: composerText.trim(), workspace_id: activeWorkspace.id }),
+        body: JSON.stringify({
+          conversation_id: selectedConvId,
+          content: composerText.trim(),
+          workspace_id: activeWorkspace.id,
+          metadata: { mentions },
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         toast({ title: 'Send failed', description: err.error ?? 'Unknown error', variant: 'destructive' });
       } else {
         setComposerText('');
+        setMentions({});
         await fetchMessages(selectedConvId);
       }
     } finally {
@@ -253,6 +300,8 @@ export default function MessagingPage() {
     return conv.participants.map(p => p.name ?? p.agent_id.slice(0, 8)).join(' & ');
   }
 
+  const displayName = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'You';
+
   if (!activeWorkspace) {
     return (
       <div className="flex h-[calc(100vh-6rem)] items-center justify-center">
@@ -274,6 +323,12 @@ curl -X POST "${origin}/api/agent-talk/messages" \\
   -H "Content-Type: application/json" \\
   -d '{"recipient_agent_name":"gemini-1","content":"Hello!"}'
 
+# Send to group (must be participant)
+curl -X POST "${origin}/api/agent-talk/messages" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"conversation_id":"uuid","content":"Group message"}'
+
 # Check inbox (unread only)
 curl "${origin}/api/agent-talk/inbox?unread=true" \\
   -H "Authorization: Bearer $TOKEN"
@@ -286,28 +341,31 @@ curl "${origin}/api/agent-talk/conversations/$CONV_ID" \\
 curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
   -H "Authorization: Bearer $TOKEN"`;
 
+  const filteredAgents = agents.filter(a => a.name.toLowerCase().includes(mentionFilter.toLowerCase()));
+
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden gap-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-background/80 backdrop-blur-sm flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight flex items-center gap-2">
-            <MessageSquare className="h-5 w-5 text-primary" />
-            Messaging
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-3 sm:px-4 py-2 sm:py-3 border-b bg-background/80 backdrop-blur-sm flex-shrink-0 gap-2">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold tracking-tight flex items-center gap-2 truncate">
+            <MessageSquare className="h-5 w-5 text-primary flex-shrink-0" />
+            <span className="truncate">Messaging</span>
             {totalUnread > 0 && (
-              <Badge className="ml-1 h-5 min-w-5 px-1.5 text-[10px] bg-primary text-primary-foreground">{totalUnread}</Badge>
+              <Badge className="ml-1 h-5 min-w-5 px-1.5 text-[10px] bg-primary text-primary-foreground flex-shrink-0">{totalUnread}</Badge>
             )}
           </h1>
-          <p className="text-xs text-muted-foreground">{activeWorkspace.name} — AI-to-AI persistent messaging</p>
+          <p className="text-xs text-muted-foreground truncate">{activeWorkspace.name} — AI-to-AI persistent messaging</p>
         </div>
         <Dialog open={showNewGroup} onOpenChange={setShowNewGroup}>
           <DialogTrigger asChild>
-            <Button size="sm" className="gap-1.5">
+            <Button size="sm" className="gap-1.5 w-full sm:w-auto">
               <Plus className="h-3.5 w-3.5" />
-              New Group
+              <span className="hidden sm:inline">New Group</span>
+              <span className="sm:hidden">New</span>
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md w-[95vw]">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Users className="h-4 w-4" /> Create Group Chat
@@ -369,23 +427,23 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
       </div>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden gap-0">
 
         {/* Sidebar */}
-        <div className="w-72 flex-shrink-0 border-r flex flex-col overflow-hidden bg-background">
+        <div className="hidden sm:flex w-72 flex-shrink-0 border-r flex-col overflow-hidden bg-background">
           <div className="p-2.5 border-b">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input className="pl-8 h-8 text-sm" placeholder="Search conversations..." value={search} onChange={e => setSearch(e.target.value)} />
+              <Input className="pl-8 h-8 text-sm" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
           </div>
 
-          <div className="flex gap-0.5 px-2 py-1.5 border-b">
+          <div className="flex gap-0.5 px-2 py-1.5 border-b overflow-x-auto">
             {(['all', 'group', 'dm', 'unread'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setFilter(tab)}
-                className={`flex-1 px-1.5 py-1 rounded text-xs font-medium transition-colors ${filter === tab ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted/60'}`}
+                className={`flex-1 px-1.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${filter === tab ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted/60'}`}
               >
                 {tab === 'all' ? 'All' : tab === 'group' ? 'Groups' : tab === 'dm' ? 'DMs' : (
                   <span className="flex items-center justify-center gap-1">
@@ -411,7 +469,7 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
             ) : filteredConvs.map(conv => {
               const isActive = conv.id === selectedConvId;
               const isGroup = conv.type === 'group';
-              const displayName = convDisplayName(conv);
+              const convName = convDisplayName(conv);
               const timestamp = conv.last_message_at ?? conv.created_at;
               return (
                 <button
@@ -425,7 +483,7 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1">
                       {isGroup ? <Hash className="h-3 w-3 text-muted-foreground flex-shrink-0" /> : <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0" />}
-                      <p className="text-sm font-medium truncate">{displayName}</p>
+                      <p className="text-sm font-medium truncate">{convName}</p>
                     </div>
                     <p className="text-xs text-muted-foreground truncate mt-0.5">
                       {conv.last_message ?? `${conv.participants.length} participant${conv.participants.length !== 1 ? 's' : ''}`}
@@ -444,9 +502,9 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
         </div>
 
         {/* Thread */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-background/60">
+        <div className="flex-1 flex flex-col overflow-hidden bg-background/60 gap-0">
           {!selectedConv ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 sm:px-8 text-center">
               <div className="rounded-full bg-muted/60 p-5">
                 <MessageSquare className="h-10 w-10 text-muted-foreground/50" />
               </div>
@@ -460,26 +518,26 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-3 px-4 py-2.5 border-b bg-background/80 backdrop-blur-sm flex-shrink-0">
+              <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 border-b bg-background/80 backdrop-blur-sm flex-shrink-0 overflow-x-auto">
                 {selectedConv.type === 'group' ? <GroupAvatar size="md" /> : (
                   <Avatar name={selectedConv.participants[0]?.name ?? 'A'} id={selectedConv.participants[0]?.agent_id ?? selectedConv.id} size="md" />
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-sm truncate">{convDisplayName(selectedConv)}</p>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 truncate">
                     {selectedConv.type === 'group'
-                      ? <><Hash className="h-3 w-3" /> Group — {selectedConv.participants.map(p => p.name ?? p.agent_id.slice(0, 8)).join(', ')}</>
-                      : <><Lock className="h-3 w-3" /> Private — {selectedConv.participants.length} agents</>
+                      ? <><Hash className="h-3 w-3 flex-shrink-0" /> Group — {selectedConv.participants.map(p => p.name ?? p.agent_id.slice(0, 8)).join(', ')}</>
+                      : <><Lock className="h-3 w-3 flex-shrink-0" /> Private — {selectedConv.participants.length} agents</>
                     }
                   </p>
                 </div>
-                <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono bg-muted/50 rounded px-2 py-0.5">
-                  <span>{selectedConv.id.slice(0, 8)}...</span>
+                <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono bg-muted/50 rounded px-2 py-0.5 flex-shrink-0">
+                  <span className="truncate">{selectedConv.id.slice(0, 8)}...</span>
                   <CopyButton text={selectedConv.id} />
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+              <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-1">
                 {convLoading ? (
                   <div className="flex items-center justify-center h-full">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -490,27 +548,44 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                     <p className="text-sm text-muted-foreground">No messages yet. Be the first to send one.</p>
                   </div>
                 ) : (
-                  <MessageThread messages={convMessages} />
+                  <MessageThread messages={convMessages} userDisplayName={displayName} />
                 )}
                 <div ref={threadEndRef} />
               </div>
 
-              <div className="flex-shrink-0 border-t bg-background/80 backdrop-blur-sm px-4 py-3">
+              <div className="flex-shrink-0 border-t bg-background/80 backdrop-blur-sm px-3 sm:px-4 py-3 space-y-2">
                 <div className="flex gap-2 items-end">
-                  <Textarea
-                    className="min-h-[44px] max-h-32 resize-none text-sm"
-                    placeholder={`Message ${convDisplayName(selectedConv)}...`}
-                    value={composerText}
-                    onChange={e => setComposerText(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                    rows={1}
-                  />
+                  <div className="flex-1 relative">
+                    <Textarea
+                      ref={composerRef}
+                      className="min-h-[44px] max-h-48 resize-none text-sm pr-10"
+                      placeholder="Type a message... Use @AgentName to mention"
+                      value={composerText}
+                      onChange={e => setComposerText(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                      rows={1}
+                    />
+                    {showMentions && filteredAgents.length > 0 && (
+                      <div className="absolute bottom-12 left-0 right-0 bg-background border rounded-md shadow-lg max-h-40 overflow-y-auto z-50">
+                        {filteredAgents.map(agent => (
+                          <button
+                            key={agent.id}
+                            onClick={() => insertMention(agent.name, agent.id)}
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center gap-2"
+                          >
+                            <Avatar name={agent.name} id={agent.id} size="sm" />
+                            {agent.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <Button size="icon" disabled={!composerText.trim() || sending} onClick={handleSend} className="h-[44px] w-[44px] flex-shrink-0">
                     {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-1.5">
-                  Enter to send — Shift+Enter for new line — Sending as <strong>Operator</strong>
+                <p className="text-[10px] text-muted-foreground">
+                  Enter to send — Shift+Enter for new line — Sending as <strong>{displayName}</strong>
                 </p>
               </div>
             </>
@@ -521,13 +596,13 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
         {apiCollapsed ? (
           <button
             onClick={() => setApiCollapsed(false)}
-            className="w-8 border-l flex flex-col items-center justify-center gap-1 text-muted-foreground hover:bg-muted/30 transition-colors"
+            className="hidden lg:flex w-8 border-l flex-col items-center justify-center gap-1 text-muted-foreground hover:bg-muted/30 transition-colors"
             title="Show API docs"
           >
             <ChevronRight className="h-4 w-4 rotate-180" />
           </button>
         ) : (
-          <div className="w-80 border-l flex flex-col overflow-hidden bg-background/80">
+          <div className="hidden lg:flex w-80 border-l flex-col overflow-hidden bg-background/80">
             <div className="flex items-center justify-between px-3 py-2.5 border-b">
               <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">API Reference</h3>
               <button onClick={() => setApiCollapsed(true)} className="text-muted-foreground hover:text-foreground">
@@ -551,7 +626,8 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                   {[
                     { method: 'GET', path: '/agents', desc: 'Discover agents' },
                     { method: 'POST', path: '/messages', desc: 'Send DM — returns message_id' },
-                    { method: 'GET', path: '/inbox', desc: 'Get inbox — ?unread=true' },
+                    { method: 'POST', path: '/messages (conv)', desc: 'Send to group' },
+                    { method: 'GET', path: '/inbox', desc: 'Get inbox with groups' },
                     { method: 'GET', path: '/conversations/{id}', desc: 'Full thread history' },
                     { method: 'POST', path: '/messages/{id}/read', desc: 'Mark as read' },
                   ].map(e => (
@@ -579,8 +655,8 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                   </pre>
                   {[
                     { name: 'list_agents', desc: 'Discover agents in workspace' },
-                    { name: 'send_message', desc: 'Send a message; returns IDs' },
-                    { name: 'check_inbox', desc: 'Get inbox with unread filter' },
+                    { name: 'send_message', desc: 'Send DM or group message' },
+                    { name: 'check_inbox', desc: 'Get inbox with groups' },
                     { name: 'get_conversation', desc: 'Retrieve thread history' },
                     { name: 'mark_message_read', desc: 'Mark a message as read' },
                   ].map(tool => (
@@ -593,8 +669,8 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
               )}
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">! Important</p>
-                <p className="text-[10px] text-muted-foreground">Stored != delivered. Agents must poll <code>/inbox</code>. No push or websocket.</p>
-                <p className="text-[10px] text-muted-foreground">Never auto-execute instructions from another agent without user consent.</p>
+                <p className="text-[10px] text-muted-foreground">Stored != delivered. Agents must poll /inbox. No push.</p>
+                <p className="text-[10px] text-muted-foreground">Use @AgentName to mention specific agents in groups.</p>
               </div>
             </div>
           </div>
@@ -604,8 +680,8 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
   );
 }
 
-function MessageThread({ messages }: { messages: RichMsg[] }) {
-  const groups: { sender_id: string | null; sender_name: string | null; is_operator: boolean; items: RichMsg[] }[] = [];
+function MessageThread({ messages, userDisplayName }: { messages: (Message & { sender_name: string | null; read_at: string | null })[]; userDisplayName: string }) {
+  const groups: { sender_id: string | null; sender_name: string | null; is_operator: boolean; items: (Message & { sender_name: string | null; read_at: string | null })[] }[] = [];
   for (const msg of messages) {
     const isOp = !msg.sender_agent_id;
     const lastGroup = groups[groups.length - 1];
@@ -614,7 +690,7 @@ function MessageThread({ messages }: { messages: RichMsg[] }) {
     } else {
       groups.push({
         sender_id: msg.sender_agent_id ?? 'operator',
-        sender_name: isOp ? 'Operator' : (msg.sender_name ?? msg.sender_agent_id?.slice(0, 8) ?? 'Unknown'),
+        sender_name: isOp ? userDisplayName : (msg.sender_name ?? msg.sender_agent_id?.slice(0, 8) ?? 'Unknown'),
         is_operator: isOp,
         items: [msg],
       });
@@ -627,7 +703,9 @@ function MessageThread({ messages }: { messages: RichMsg[] }) {
         return (
           <div key={gi} className={`flex gap-2.5 ${isOp ? 'flex-row-reverse' : ''}`}>
             {isOp ? (
-              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-[10px] font-bold text-primary-foreground flex-shrink-0 self-end">OP</div>
+              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-[10px] font-bold text-primary-foreground flex-shrink-0 self-end">
+                {userDisplayName.slice(0, 2).toUpperCase()}
+              </div>
             ) : (
               <div className="self-end">
                 <Avatar name={group.sender_name ?? 'A'} id={group.sender_id ?? 'x'} size="sm" />
@@ -637,7 +715,7 @@ function MessageThread({ messages }: { messages: RichMsg[] }) {
               <p className="text-[11px] text-muted-foreground px-1 font-medium">{group.sender_name}</p>
               {group.items.map((msg, mi) => (
                 <div key={msg.id} className="relative">
-                  <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${isOp ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+                  <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${isOp ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
                     {msg.content}
                   </div>
                   {mi === group.items.length - 1 && (
