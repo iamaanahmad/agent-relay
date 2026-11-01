@@ -13,13 +13,13 @@ const MAX_CONTENT_BYTES = 32768;
 const MAX_METADATA_BYTES = 8192;
 
 // POST /api/agent-talk/messages
-// Send a message to a recipient agent. Creates or reuses a 1-to-1 conversation.
+// Send a message to a recipient agent or to a group conversation.
 //
 // Request body:
 // {
-//   "recipient_agent_name": "worker-1",   // required
+//   "recipient_agent_name": "worker-1",   // optional — for DM (mutually exclusive with conversation_id for group)
+//   "conversation_id": "uuid",            // optional — for group messaging (must be a participant)
 //   "content": "Hello, can you help?",    // required, ≤ 32 KB
-//   "conversation_id": "uuid",            // optional — reuse an existing thread
 //   "metadata": {}                        // optional, ≤ 8 KB
 // }
 //
@@ -43,9 +43,13 @@ export async function POST(req: Request) {
   await touchToken(auth);
 
   const recipientName = typeof args.recipient_agent_name === 'string' ? args.recipient_agent_name.trim() : '';
+  const inputConversationId = typeof args.conversation_id === 'string' ? args.conversation_id.trim() : '';
   const content = typeof args.content === 'string' ? args.content : '';
-  if (!recipientName) return Response.json({ error: 'recipient_agent_name is required' }, { status: 400 });
+
   if (!content.trim()) return Response.json({ error: 'content is required' }, { status: 400 });
+  if (!recipientName && !inputConversationId) {
+    return Response.json({ error: 'recipient_agent_name or conversation_id is required' }, { status: 400 });
+  }
   if (new TextEncoder().encode(content).length > MAX_CONTENT_BYTES) {
     return Response.json({ error: `content too large (max ${MAX_CONTENT_BYTES} bytes)` }, { status: 413 });
   }
@@ -53,30 +57,57 @@ export async function POST(req: Request) {
     return Response.json({ error: `metadata too large (max ${MAX_METADATA_BYTES} bytes)` }, { status: 413 });
   }
 
-  // Resolve recipient
-  const { data: recipient, error: recErr } = await auth.supabase
-    .from('agents')
-    .select('id, name')
-    .eq('workspace_id', auth.workspaceId)
-    .eq('name', recipientName)
-    .maybeSingle();
-  if (recErr) return Response.json({ error: 'lookup_failed' }, { status: 500 });
-  if (!recipient) return Response.json({ error: 'recipient_not_found', message: `No agent named "${recipientName}" in this workspace.` }, { status: 404 });
-  if (recipient.id === auth.agentId) return Response.json({ error: 'cannot_message_self' }, { status: 400 });
+  let conversationId: string | null = null;
+  let recipientId: string | null = null;
 
-  // Find or create a 1-to-1 conversation between these two agents
-  let conversationId = typeof args.conversation_id === 'string' ? args.conversation_id.trim() : null;
-
-  if (conversationId) {
-    // Verify the caller is a participant in the supplied conversation
+  // Case 1: Send to a specific conversation (group or DM)
+  if (inputConversationId) {
+    // Verify the conversation exists and caller is a participant
     const { data: membership } = await auth.supabase
       .from('conversation_participants')
-      .select('conversation_id')
-      .eq('conversation_id', conversationId)
+      .select('conversation_id, conversations!inner(workspace_id, type, can_agents_write)')
+      .eq('conversation_id', inputConversationId)
       .eq('agent_id', auth.agentId)
+      .eq('conversations.workspace_id', auth.workspaceId)
       .maybeSingle();
+
     if (!membership) return Response.json({ error: 'conversation_not_found', message: 'Conversation not found or you are not a participant.' }, { status: 404 });
-  } else {
+
+    const convData = membership.conversations;
+    const conv = Array.isArray(convData) ? convData[0] : convData;
+    if (conv && !conv.can_agents_write) {
+      return Response.json({ error: 'forbidden', message: 'Agents cannot write to this conversation (read-only).' }, { status: 403 });
+    }
+
+    conversationId = inputConversationId;
+
+    // For DM conversations, determine the recipient
+    if (conv.type === 'dm') {
+      const { data: participants } = await auth.supabase
+        .from('conversation_participants')
+        .select('agent_id')
+        .eq('conversation_id', conversationId)
+        .neq('agent_id', auth.agentId);
+      if (participants && participants.length > 0) {
+        recipientId = participants[0].agent_id;
+      }
+    }
+    // For group conversations, recipient_agent_id is null (broadcast to all)
+  }
+  // Case 2: Send to a specific agent (find or create DM)
+  else if (recipientName) {
+    // Resolve recipient
+    const { data: recipient, error: recErr } = await auth.supabase
+      .from('agents')
+      .select('id, name')
+      .eq('workspace_id', auth.workspaceId)
+      .eq('name', recipientName)
+      .maybeSingle();
+    if (recErr) return Response.json({ error: 'lookup_failed' }, { status: 500 });
+    if (!recipient) return Response.json({ error: 'recipient_not_found', message: `No agent named "${recipientName}" in this workspace.` }, { status: 404 });
+    if (recipient.id === auth.agentId) return Response.json({ error: 'cannot_message_self' }, { status: 400 });
+    recipientId = recipient.id;
+
     // Find existing 1-to-1 conversation between these two agents in this workspace
     const { data: existing } = await auth.supabase
       .from('conversation_participants')
@@ -97,10 +128,10 @@ export async function POST(req: Request) {
     }
 
     if (!conversationId) {
-      // Create new conversation
+      // Create new DM conversation
       const { data: conv, error: convErr } = await auth.supabase
         .from('conversations')
-        .insert({ workspace_id: auth.workspaceId, metadata: {} })
+        .insert({ workspace_id: auth.workspaceId, type: 'dm', metadata: {} })
         .select('id')
         .maybeSingle();
       if (convErr || !conv) return Response.json({ error: 'conversation_create_failed' }, { status: 500 });
@@ -124,7 +155,7 @@ export async function POST(req: Request) {
       conversation_id: conversationId,
       workspace_id: auth.workspaceId,
       sender_agent_id: auth.agentId,
-      recipient_agent_id: recipient.id,
+      recipient_agent_id: recipientId, // null for group, specific agent for DM
       content,
       metadata: (args.metadata && typeof args.metadata === 'object' && !Array.isArray(args.metadata)) ? args.metadata : {},
     })

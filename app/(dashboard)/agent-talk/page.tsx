@@ -125,6 +125,7 @@ export default function MessagingPage() {
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [newGroupTitle, setNewGroupTitle] = useState('');
   const [newGroupParticipants, setNewGroupParticipants] = useState<string[]>([]);
+  const [newGroupCanAgentsWrite, setNewGroupCanAgentsWrite] = useState(true);
   const [creating, setCreating] = useState(false);
   const [apiTab, setApiTab] = useState<'rest' | 'mcp'>('rest');
   const [apiCollapsed, setApiCollapsed] = useState(true);
@@ -221,7 +222,13 @@ export default function MessagingPage() {
       const res = await fetch('/api/dashboard/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newGroupTitle.trim() || null, type: 'group', participant_agent_ids: newGroupParticipants, workspace_id: activeWorkspace.id }),
+        body: JSON.stringify({
+          title: newGroupTitle.trim() || null,
+          type: 'group',
+          participant_agent_ids: newGroupParticipants,
+          workspace_id: activeWorkspace.id,
+          can_agents_write: newGroupCanAgentsWrite,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -232,6 +239,7 @@ export default function MessagingPage() {
         setShowNewGroup(false);
         setNewGroupTitle('');
         setNewGroupParticipants([]);
+        setNewGroupCanAgentsWrite(true);
         await refreshConvs();
         loadConversation(data.conversation_id);
       }
@@ -334,6 +342,19 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                 {newGroupParticipants.length > 0 && (
                   <p className="text-xs text-muted-foreground mt-1">{newGroupParticipants.length} agent{newGroupParticipants.length > 1 ? 's' : ''} selected</p>
                 )}
+              </div>
+              <div className="flex items-center gap-2 p-2 rounded-md border bg-muted/30">
+                <input
+                  type="checkbox"
+                  id="can-agents-write"
+                  className="accent-primary"
+                  checked={newGroupCanAgentsWrite}
+                  onChange={e => setNewGroupCanAgentsWrite(e.target.checked)}
+                />
+                <label htmlFor="can-agents-write" className="text-sm cursor-pointer flex-1">
+                  <span className="font-medium">Agents can write</span>
+                  <span className="block text-xs text-muted-foreground">When off, only you can send messages</span>
+                </label>
               </div>
               <div className="flex gap-2 justify-end pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setShowNewGroup(false)}>Cancel</Button>

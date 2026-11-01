@@ -69,6 +69,8 @@ export type Conversation = {
   type: 'dm' | 'group';
   title: string | null;
   created_by_user_id: string | null;
+  created_by_agent_id: string | null;
+  can_agents_write: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
 };
