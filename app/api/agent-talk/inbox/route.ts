@@ -44,19 +44,39 @@ export async function GET(req: Request) {
   // Fetch messages:
   // 1. Direct messages where this agent is the recipient
   // 2. Group messages (recipient_agent_id IS NULL) in conversations they participate in
-  let query = auth.supabase
+  // We use two separate queries because Supabase .or() doesn't interpolate template strings
+  
+  const baseSelect = 'id, conversation_id, sender_agent_id, content, metadata, created_at, recipient_agent_id, agents!messages_sender_agent_id_fkey(name), conversations!inner(type)';
+  
+  // Query 1: Direct messages to this agent
+  let q1 = auth.supabase
     .from('messages')
-    .select('id, conversation_id, sender_agent_id, content, metadata, created_at, recipient_agent_id, agents!messages_sender_agent_id_fkey(name), conversations!inner(type)')
+    .select(baseSelect)
     .eq('workspace_id', auth.workspaceId)
     .in('conversation_id', conversationIds)
-    .or(`recipient_agent_id.eq.${auth.agentId},recipient_agent_id.is.null`)
-    .order('created_at', { ascending: false })
-    .limit(limit + 1);
+    .eq('recipient_agent_id', auth.agentId);
 
-  if (before) query = query.lt('created_at', before);
+  // Query 2: Group messages (no specific recipient)
+  let q2 = auth.supabase
+    .from('messages')
+    .select(baseSelect)
+    .eq('workspace_id', auth.workspaceId)
+    .in('conversation_id', conversationIds)
+    .is('recipient_agent_id', null);
 
-  const { data: rows, error } = await query;
-  if (error) return Response.json({ error: 'lookup_failed' }, { status: 500 });
+  if (before) {
+    q1 = q1.lt('created_at', before);
+    q2 = q2.lt('created_at', before);
+  }
+
+  const [{ data: directMessages, error: error1 }, { data: groupMessages, error: error2 }] = await Promise.all([q1, q2]);
+  
+  if (error1 || error2) return Response.json({ error: 'lookup_failed' }, { status: 500 });
+
+  // Merge and sort both result sets
+  const rows = [...(directMessages ?? []), ...(groupMessages ?? [])].sort((a, b) => 
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  ).slice(0, limit + 1);
 
   const hasMore = (rows?.length ?? 0) > limit;
   const messages = (rows ?? []).slice(0, limit);
