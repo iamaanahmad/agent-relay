@@ -84,8 +84,36 @@ export async function POST(req: NextRequest) {
 
   const { title, type = 'group', participant_agent_ids, workspace_id, can_agents_write = true } = body;
   if (!workspace_id) return NextResponse.json({ error: 'workspace_id required' }, { status: 400 });
+  if (!['group', 'dm'].includes(type)) {
+    return NextResponse.json({ error: 'invalid_type', message: 'Conversation type must be group or dm.' }, { status: 400 });
+  }
+  if (typeof title === 'string' && title.length > 80) {
+    return NextResponse.json({ error: 'title_too_long', message: 'Conversation titles may contain at most 80 characters.' }, { status: 400 });
+  }
+  if (typeof can_agents_write !== 'boolean') {
+    return NextResponse.json({ error: 'invalid_permission', message: 'can_agents_write must be a boolean.' }, { status: 400 });
+  }
   if (!participant_agent_ids || !Array.isArray(participant_agent_ids) || participant_agent_ids.length === 0) {
     return NextResponse.json({ error: 'participant_agent_ids required' }, { status: 400 });
+  }
+  if (participant_agent_ids.length > 50) {
+    return NextResponse.json({ error: 'too_many_participants', message: 'A conversation supports at most 50 agents.' }, { status: 400 });
+  }
+  if (participant_agent_ids.some((id) => typeof id !== 'string')) {
+    return NextResponse.json({ error: 'invalid_participant', message: 'Participant agent IDs must be strings.' }, { status: 400 });
+  }
+
+  const uniqueAgentIds = Array.from(new Set(participant_agent_ids as string[]));
+  const { data: validAgents, error: agentLookupError } = await supabase
+    .from('agents')
+    .select('id')
+    .eq('workspace_id', workspace_id)
+    .in('id', uniqueAgentIds);
+  if (agentLookupError) {
+    return NextResponse.json({ error: 'participant_lookup_failed' }, { status: 500 });
+  }
+  if (!validAgents || validAgents.length !== uniqueAgentIds.length) {
+    return NextResponse.json({ error: 'invalid_participant', message: 'Every participant must belong to this workspace.' }, { status: 400 });
   }
 
   const { data: conv, error: convErr } = await supabase
@@ -103,7 +131,7 @@ export async function POST(req: NextRequest) {
 
   if (convErr || !conv) return NextResponse.json({ error: 'create_failed', detail: convErr?.message }, { status: 500 });
 
-  const participants = (participant_agent_ids as string[]).map((agent_id) => ({
+  const participants = uniqueAgentIds.map((agent_id) => ({
     conversation_id: conv.id,
     agent_id,
   }));

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAgents } from '@/lib/hooks';
 import { useWorkspace } from '@/components/workspace-provider';
@@ -37,6 +37,46 @@ export default function AgentsPage() {
   const [tokenAgent, setTokenAgent] = useState<Agent | null>(null);
   const [newToken, setNewToken] = useState<string | null>(null);
   const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenLastUsed, setTokenLastUsed] = useState<Record<string, string | null>>({});
+  const [activeTaskCount, setActiveTaskCount] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!activeWorkspace) return;
+    let cancelled = false;
+    const supabase = getSupabaseBrowserClient();
+
+    Promise.all([
+      supabase
+        .from('agent_tokens')
+        .select('agent_id, last_used_at, revoked_at')
+        .eq('workspace_id', activeWorkspace.id)
+        .is('revoked_at', null),
+      supabase
+        .from('tasks')
+        .select('recipient_agent_id, status')
+        .eq('workspace_id', activeWorkspace.id)
+        .in('status', ['queued', 'running']),
+    ]).then(([tokensResult, tasksResult]) => {
+      if (cancelled) return;
+
+      const lastUsed: Record<string, string | null> = {};
+      for (const token of tokensResult.data ?? []) {
+        if (!lastUsed[token.agent_id] || (token.last_used_at && token.last_used_at > (lastUsed[token.agent_id] ?? ''))) {
+          lastUsed[token.agent_id] = token.last_used_at;
+        }
+      }
+
+      const taskCounts: Record<string, number> = {};
+      for (const task of tasksResult.data ?? []) {
+        taskCounts[task.recipient_agent_id] = (taskCounts[task.recipient_agent_id] ?? 0) + 1;
+      }
+
+      setTokenLastUsed(lastUsed);
+      setActiveTaskCount(taskCounts);
+    });
+
+    return () => { cancelled = true; };
+  }, [activeWorkspace]);
 
   if (!activeWorkspace) {
     return (
@@ -174,9 +214,25 @@ export default function AgentsPage() {
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-2">
                   <span className="truncate">{a.name}</span>
-                  <Badge variant="secondary">MCP</Badge>
+                  {(() => {
+                    const lastUsed = tokenLastUsed[a.id];
+                    const recent = lastUsed && Date.now() - new Date(lastUsed).getTime() < 15 * 60 * 1000;
+                    const active = (activeTaskCount[a.id] ?? 0) > 0;
+                    return (
+                      <Badge variant={active ? 'default' : recent ? 'secondary' : 'outline'}>
+                        {active ? 'Working' : recent ? 'Connected' : lastUsed ? 'Idle' : 'Never connected'}
+                      </Badge>
+                    );
+                  })()}
                 </CardTitle>
                 {a.description && <CardDescription className="line-clamp-2">{a.description}</CardDescription>}
+                <CardDescription>
+                  {(activeTaskCount[a.id] ?? 0) > 0
+                    ? `${activeTaskCount[a.id]} active task${activeTaskCount[a.id] === 1 ? '' : 's'}`
+                    : tokenLastUsed[a.id]
+                      ? `Last connected ${new Date(tokenLastUsed[a.id]!).toLocaleString()}`
+                      : 'No connection activity yet'}
+                </CardDescription>
               </CardHeader>
               <CardContent className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => handleGenerateToken(a)}>

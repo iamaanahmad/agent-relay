@@ -44,20 +44,9 @@ export default function AccountSettingsPage() {
   }, [authLoading, user, router]);
 
   async function fetchUserProfile() {
-    const supabase = getSupabaseBrowserClient();
-    const { data, error } = await supabase
-      .from('auth.users')
-      .select('raw_user_meta_data')
-      .eq('id', user?.id)
-      .maybeSingle();
-    
-    if (!error && data) {
-      const profile = data.raw_user_meta_data || {};
-      setDisplayName(profile.display_name || user?.email?.split('@')[0] || '');
-      setUserProfile(profile);
-    } else {
-      setDisplayName(user?.email?.split('@')[0] || '');
-    }
+    const profile = user?.user_metadata ?? {};
+    setDisplayName(profile.display_name || user?.email?.split('@')[0] || '');
+    setUserProfile(profile);
   }
 
   async function handleUpdateProfile(e: React.FormEvent) {

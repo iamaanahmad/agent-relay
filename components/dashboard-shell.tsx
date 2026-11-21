@@ -28,7 +28,17 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Radio, LayoutDashboard, Plug, Send, Inbox, ShieldCheck, ScrollText, MessageSquareText, BookOpen, Loader2, ChevronsUpDown, Plus, Check, LogOut, Settings } from 'lucide-react';
+import { Radio, LayoutDashboard, Plug, Send, Inbox, ShieldCheck, ScrollText, MessageSquareText, BookOpen, Loader2, ChevronsUpDown, Plus, Check, LogOut, Settings, Activity } from 'lucide-react';
+import { useAgents, useTasks } from '@/lib/hooks';
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from '@/components/ui/command';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -49,13 +59,27 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const { toast } = useToast();
+  const { agents } = useAgents();
+  const { tasks } = useTasks();
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.replace('/signin');
     }
   }, [authLoading, user, router]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
 
   async function handleCreateWorkspace(e: React.FormEvent) {
     e.preventDefault();
@@ -199,7 +223,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/settings/account" className="flex items-center gap-2 cursor-pointer">
+                <Link href="/settings" className="flex items-center gap-2 cursor-pointer">
                   <Settings className="h-4 w-4" />
                   Account settings
                 </Link>
@@ -214,6 +238,74 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+
+      <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
+        <CommandInput placeholder="Search pages, agents, and tasks…" />
+        <CommandList>
+          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandGroup heading="Pages">
+            {NAV.map(({ href, label, icon: Icon }) => (
+              <CommandItem
+                key={href}
+                value={label}
+                onSelect={() => {
+                  setCommandOpen(false);
+                  router.push(href);
+                }}
+              >
+                <Icon className="mr-2 h-4 w-4" />
+                {label}
+                {pathname === href && <CommandShortcut>Current</CommandShortcut>}
+              </CommandItem>
+            ))}
+            <CommandItem
+              value="Account settings"
+              onSelect={() => {
+                setCommandOpen(false);
+                router.push('/settings');
+              }}
+            >
+              <Settings className="mr-2 h-4 w-4" />
+              Account settings
+            </CommandItem>
+          </CommandGroup>
+          {agents.length > 0 && (
+            <CommandGroup heading="Agents">
+              {agents.map((agent) => (
+                <CommandItem
+                  key={agent.id}
+                  value={`${agent.name} ${agent.description ?? ''}`}
+                  onSelect={() => {
+                    setCommandOpen(false);
+                    router.push(`/agents/${agent.id}`);
+                  }}
+                >
+                  <Plug className="mr-2 h-4 w-4" />
+                  {agent.name}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {tasks.length > 0 && (
+            <CommandGroup heading="Recent tasks">
+              {tasks.slice(0, 8).map((task) => (
+                <CommandItem
+                  key={task.id}
+                  value={`${task.title} ${task.status}`}
+                  onSelect={() => {
+                    setCommandOpen(false);
+                    router.push('/inbox');
+                  }}
+                >
+                  <Activity className="mr-2 h-4 w-4" />
+                  <span className="truncate">{task.title}</span>
+                  <CommandShortcut>{task.status.replace(/_/g, ' ')}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+        </CommandList>
+      </CommandDialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">

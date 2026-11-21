@@ -35,6 +35,8 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Message, Conversation } from '@/lib/types';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 /* helpers */
 function formatTime(iso: string) {
@@ -135,12 +137,25 @@ export default function MessagingPage() {
   const [mentions, setMentions] = useState<{ [key: string]: string }>({});
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
-  const threadEndRef = useRef<HTMLDivElement>(null);
+  const threadScrollRef = useRef<HTMLDivElement>(null);
+  const previousConvIdRef = useRef<string | null>(null);
+  const isNearBottomRef = useRef(true);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { setOrigin(window.location.origin); }, []);
-  useEffect(() => { threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [convMessages]);
+  useEffect(() => {
+    const viewport = threadScrollRef.current;
+    if (!viewport) return;
+
+    const conversationChanged = previousConvIdRef.current !== selectedConvId;
+    previousConvIdRef.current = selectedConvId;
+    if (conversationChanged || isNearBottomRef.current) {
+      requestAnimationFrame(() => {
+        viewport.scrollTop = viewport.scrollHeight;
+      });
+    }
+  }, [convMessages, selectedConvId]);
 
   const richConvs: RichConv[] = useMemo(() =>
     conversations.map(c => ({ ...c, type: (c as RichConv).type ?? 'dm' })),
@@ -537,7 +552,14 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-1">
+              <div
+                ref={threadScrollRef}
+                onScroll={e => {
+                  const viewport = e.currentTarget;
+                  isNearBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120;
+                }}
+                className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-1"
+              >
                 {convLoading ? (
                   <div className="flex items-center justify-center h-full">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -550,7 +572,6 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
                 ) : (
                   <MessageThread messages={convMessages} userDisplayName={displayName} />
                 )}
-                <div ref={threadEndRef} />
               </div>
 
               <div className="flex-shrink-0 border-t bg-background/80 backdrop-blur-sm px-3 sm:px-4 py-3 space-y-2">
@@ -680,6 +701,49 @@ curl -X POST "${origin}/api/agent-talk/messages/$MSG_ID/read" \\
   );
 }
 
+const messageMarkdownComponents: Components = {
+  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="underline decoration-current/60 underline-offset-2 hover:decoration-current"
+    >
+      {children}
+    </a>
+  ),
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+  li: ({ children }) => <li className="pl-0.5">{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote className="mb-2 border-l-2 border-current/40 pl-3 opacity-90 last:mb-0">{children}</blockquote>
+  ),
+  pre: ({ children }) => (
+    <pre className="my-2 max-w-full overflow-x-auto rounded-md border border-current/15 bg-black/10 p-2.5 font-mono text-xs leading-relaxed last:mb-0">
+      {children}
+    </pre>
+  ),
+  code: ({ children, className }) => className ? (
+    <code className={className}>{children}</code>
+  ) : (
+    <code className="rounded bg-black/10 px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
+  ),
+  h1: ({ children }) => <h1 className="mb-2 text-lg font-semibold">{children}</h1>,
+  h2: ({ children }) => <h2 className="mb-2 text-base font-semibold">{children}</h2>,
+  h3: ({ children }) => <h3 className="mb-1.5 text-sm font-semibold">{children}</h3>,
+  hr: () => <hr className="my-2 border-current/20" />,
+  table: ({ children }) => (
+    <div className="my-2 max-w-full overflow-x-auto last:mb-0">
+      <table className="border-collapse text-xs">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => <th className="border border-current/20 px-2 py-1 text-left">{children}</th>,
+  td: ({ children }) => <td className="border border-current/20 px-2 py-1">{children}</td>,
+};
+
 function MessageThread({ messages, userDisplayName }: { messages: (Message & { sender_name: string | null; read_at: string | null })[]; userDisplayName: string }) {
   const groups: { sender_id: string | null; sender_name: string | null; is_operator: boolean; items: (Message & { sender_name: string | null; read_at: string | null })[] }[] = [];
   for (const msg of messages) {
@@ -715,8 +779,10 @@ function MessageThread({ messages, userDisplayName }: { messages: (Message & { s
               <p className="text-[11px] text-muted-foreground px-1 font-medium">{group.sender_name}</p>
               {group.items.map((msg, mi) => (
                 <div key={msg.id} className="relative">
-                  <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${isOp ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
-                    {msg.content}
+                  <div className={`max-w-full px-3 py-2 rounded-2xl text-sm leading-relaxed break-words ${isOp ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={messageMarkdownComponents}>
+                      {msg.content}
+                    </ReactMarkdown>
                   </div>
                   {mi === group.items.length - 1 && (
                     <p className={`text-[10px] text-muted-foreground mt-0.5 px-1 ${isOp ? 'text-right' : 'text-left'}`}>
